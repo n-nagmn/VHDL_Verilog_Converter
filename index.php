@@ -2,54 +2,56 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>HDL 相互変換ツール</title>
+    <title>HDL Professional Converter</title>
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 20px; background-color: #f4f4f9; }
-        .toolbar { margin-bottom: 15px; display: flex; align-items: center; gap: 10px; background: #fff; padding: 10px; border-radius: 8px; border: 1px solid #ddd;}
-        button { padding: 8px 15px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
+        .toolbar { margin-bottom: 15px; display: flex; align-items: center; gap: 12px; background: #fff; padding: 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border: 1px solid #ddd;}
+        button { padding: 10px 18px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        button:active { transform: translateY(1px); }
+        button:disabled { background: #ccc !important; cursor: not-allowed; }
         .btn-convert { background: #0078d4; color: white; }
+        .btn-convert:hover { background: #005a9e; }
         .btn-download { background: #28a745; color: white; }
         .btn-zip { background: #6c757d; color: white; }
-        .editor-container { display: flex; gap: 20px; height: 75vh; }
-        .editor-box { flex: 1; display: flex; flex-direction: column; }
-        .editor-label { font-weight: bold; padding: 8px; background: #e0e0e0; border: 1px solid #ccc; border-bottom: none; display: flex; justify-content: space-between; align-items: center; }
-        .editor { flex: 1; border: 1px solid #ccc; }
-        #fileListDisplay { font-size: 12px; color: #666; }
-        select { padding: 4px; border-radius: 4px; }
+        .editor-container { display: flex; gap: 20px; height: 78vh; }
+        .editor-box { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .editor-label { font-size: 14px; font-weight: bold; padding: 10px 15px; background: #f8f9fa; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .editor { flex: 1; }
+        #fileListDisplay { font-size: 13px; color: #555; font-style: italic; }
+        select { padding: 6px; border-radius: 4px; border: 1px solid #ccc; background: white; }
     </style>
 </head>
 <body>
 
-    <h1>HDL 相互変換ツール</h1>
+    <h2 style="margin-top: 0;">HDL 相互変換 & 自動整形ツール</h2>
     
     <div class="toolbar">
         <input type="file" id="fileInput" style="display: none;" multiple onchange="loadFiles(event)">
-        <button onclick="document.getElementById('fileInput').click()">📁 ファイル一括選択</button>
-        <span id="fileListDisplay">選択されていません</span>
+        <button onclick="document.getElementById('fileInput').click()" style="background: #eee;">📁 ファイル選択</button>
+        <span id="fileListDisplay">未選択</span>
 
         <select id="direction">
-            <option value="vhdl2verilog">VHDL &rarr; Verilog</option>
-            <option value="verilog2vhdl">Verilog &rarr; VHDL</option>
+            <option value="vhdl2verilog">VHDL ➔ Verilog (Auto-Format)</option>
+            <option value="verilog2vhdl">Verilog ➔ VHDL (Auto-Format)</option>
         </select>
         
-        <button id="convertBtn" class="btn-convert" onclick="convertCode()">変換を実行 &rarr;</button>
+        <button id="convertBtn" class="btn-convert" onclick="convertCode()">変換と整形を実行</button>
         
-        <button id="dlBtn" class="btn-download" onclick="downloadSelected()" disabled>💾 表示中のみ保存</button>
-        <button id="dlAllBtn" class="btn-zip" onclick="downloadAll()" disabled>📦 全ファイルをZIP保存</button>
+        <button id="dlBtn" class="btn-download" onclick="downloadSelected()" disabled>💾 保存</button>
+        <button id="dlAllBtn" class="btn-zip" onclick="downloadAll()" disabled>📦 全ZIP保存</button>
         
-        <span id="statusMessage" style="margin-left: auto; font-weight: bold;"></span>
+        <span id="statusMessage" style="margin-left: auto; font-weight: bold; padding-right: 10px;"></span>
     </div>
 
     <div class="editor-container">
         <div class="editor-box">
-            <div class="editor-label">入力 (ソースコード)</div>
+            <div class="editor-label">入力ソース</div>
             <div id="editorLeft" class="editor"></div>
         </div>
         <div class="editor-box">
             <div class="editor-label">
-                出力 (変換結果)
-                <select id="outputSelector" onchange="onOutputChange()" style="max-width: 200px;"></select>
+                整形済み出力
+                <select id="outputSelector" onchange="onOutputChange()" style="max-width: 250px;"></select>
             </div>
             <div id="editorRight" class="editor"></div>
         </div>
@@ -65,36 +67,46 @@
 
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.38.0/min/vs' }});
         require(['vs/editor/editor.main'], function() {
-            editorL = monaco.editor.create(document.getElementById('editorLeft'), { language: 'vhdl', theme: 'vs-dark', automaticLayout: true });
-            editorR = monaco.editor.create(document.getElementById('editorRight'), { language: 'verilog', theme: 'vs-dark', readOnly: true, automaticLayout: true });
+            const commonConfig = {
+                theme: 'vs-dark',
+                automaticLayout: true,
+                fontSize: 14,
+                fontFamily: "'Cascadia Code', 'Consolas', monospace",
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false
+            };
+            
+            editorL = monaco.editor.create(document.getElementById('editorLeft'), { ...commonConfig, language: 'vhdl' });
+            editorR = monaco.editor.create(document.getElementById('editorRight'), { ...commonConfig, language: 'verilog', readOnly: true });
         });
 
         async function loadFiles(event) {
             const files = Array.from(event.target.files);
+            if (files.length === 0) return;
+            
             inputFiles = [];
             for (const f of files) {
                 const text = await f.text();
                 inputFiles.push({ name: f.name, content: text });
             }
-            if (inputFiles.length > 0) {
-                editorL.setValue(inputFiles[0].content);
-                document.getElementById('fileListDisplay').innerText = `${inputFiles.length}個のファイルを読み込み済み`;
-                
-                // 言語設定の自動切り替え（入力側）
-                const ext = inputFiles[0].name.split('.').pop().toLowerCase();
-                const mode = (ext === 'vhd' || ext === 'vhdl') ? 'vhdl' : 'verilog';
-                monaco.editor.setModelLanguage(editorL.getModel(), mode);
-            }
+            
+            editorL.setValue(inputFiles[0].content);
+            document.getElementById('fileListDisplay').innerText = `${inputFiles.length}個を読込`;
+            
+            const ext = inputFiles[0].name.split('.').pop().toLowerCase();
+            const mode = (ext === 'vhd' || ext === 'vhdl') ? 'vhdl' : 'verilog';
+            monaco.editor.setModelLanguage(editorL.getModel(), mode);
         }
 
         async function convertCode() {
             const status = document.getElementById('statusMessage');
-            if (inputFiles.length === 0) { status.innerText = "ファイルを選択してください"; return; }
+            if (inputFiles.length === 0) { alert("ファイルを選択してください"); return; }
             
+            // 現在エディタに表示されている内容で上書き（編集対応）
             inputFiles[0].content = editorL.getValue();
             
-            status.innerText = "変換中...";
-            status.style.color = "orange";
+            status.innerText = "⏳ 変換・整形中...";
+            status.style.color = "#ef6c00";
 
             try {
                 const res = await fetch('http://172.23.72.107:3030/api/convert', {
@@ -109,19 +121,18 @@
                     updateOutputSelector();
                     displayOutput(0);
                     
-                    // ボタン類を有効化
                     document.getElementById('dlBtn').disabled = false;
                     document.getElementById('dlAllBtn').disabled = false;
                     
-                    status.innerText = "変換成功";
+                    status.innerText = "✅ 完了";
                     status.style.color = "green";
                 } else {
-                    alert("エラー: " + data.error);
-                    status.innerText = "失敗";
+                    status.innerText = "❌ 失敗";
                     status.style.color = "red";
+                    alert("サーバーエラー: " + data.error);
                 }
             } catch (e) { 
-                status.innerText = "サーバー接続失敗";
+                status.innerText = "🚫 通信失敗";
                 status.style.color = "red";
                 console.error(e);
             }
@@ -139,8 +150,7 @@
         }
 
         function onOutputChange() {
-            const index = document.getElementById('outputSelector').value;
-            displayOutput(index);
+            displayOutput(document.getElementById('outputSelector').value);
         }
 
         function displayOutput(index) {
@@ -151,12 +161,10 @@
             }
         }
 
-        // 個別ダウンロード
         function downloadSelected() {
             const index = document.getElementById('outputSelector').value;
             const file = outputFiles[index];
             if (!file) return;
-
             const blob = new Blob([file.content], { type: 'text/plain' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -164,27 +172,15 @@
             a.click();
         }
 
-        // 全ファイル一括ZIPダウンロード
         async function downloadAll() {
             if (outputFiles.length === 0) return;
-            
             const zip = new JSZip();
-            const status = document.getElementById('statusMessage');
-            const originalStatus = status.innerText;
-            
-            status.innerText = "ZIP生成中...";
-            
-            outputFiles.forEach(file => {
-                zip.file(file.name, file.content);
-            });
-
+            outputFiles.forEach(f => zip.file(f.name, f.content));
             const content = await zip.generateAsync({ type: "blob" });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(content);
-            a.download = "converted_hdl_files.zip";
+            a.download = "hdl_formatted_files.zip";
             a.click();
-            
-            status.innerText = originalStatus;
         }
     </script>
 </body>
