@@ -19,10 +19,33 @@
         .editor { flex: 1; }
         #fileListDisplay { font-size: 13px; color: #555; font-style: italic; }
         select { padding: 6px; border-radius: 4px; border: 1px solid #ccc; background: white; }
+        /* styleタグの中に追加 */
+        .toolbar {
+            /* 既存のスタイルに以下を追記・修正 */
+            border: 2px dashed #ccc; /* 点線にしてドロップ領域っぽく */
+            transition: all 0.3s;
+        }
+
+        .toolbar.dragover {
+            background-color: #e1f5fe;
+            border-color: #0078d4;
+        }
+
+        /* エディタ全体をドロップ可能にするためのスタイル */
+        #drop-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 120, 212, 0.2);
+            z-index: 9999;
+            border: 4px dashed #0078d4;
+            pointer-events: none; /* ドラッグイベントの邪魔をしない */
+        }
     </style>
 </head>
 <body>
-
+    <div id="drop-overlay"></div>
     <h2 style="margin-top: 0;">HDL 相互変換 & 自動整形ツール</h2>
     
     <div class="toolbar">
@@ -129,7 +152,13 @@
                 } else {
                     status.innerText = "❌ 失敗";
                     status.style.color = "red";
-                    alert("サーバーエラー: " + data.error);
+                    
+                    // 「不足ファイル検知」というキーワードが含まれていたら、親切なアラートを出す
+                    if (data.error.includes("不足ファイル検知")) {
+                        alert("⚠️ 依存ファイルが足りません\n\n" + data.error);
+                    } else {
+                        alert("サーバーエラー: " + data.error);
+                    }
                 }
             } catch (e) { 
                 status.innerText = "🚫 通信失敗";
@@ -182,6 +211,51 @@
             a.download = "hdl_formatted_files.zip";
             a.click();
         }
+
+        // 共通のファイル処理関数
+        async function processFiles(files) {
+            if (files.length === 0) return;
+            
+            inputFiles = [];
+            for (const f of files) {
+                const text = await f.text();
+                inputFiles.push({ name: f.name, content: text });
+            }
+            
+            editorL.setValue(inputFiles[0].content);
+            document.getElementById('fileListDisplay').innerText = `${inputFiles.length}個を読込`;
+            
+            const ext = inputFiles[0].name.split('.').pop().toLowerCase();
+            const mode = (ext === 'vhd' || ext === 'vhdl') ? 'vhdl' : 'verilog';
+            monaco.editor.setModelLanguage(editorL.getModel(), mode);
+        }
+
+        // 既存のファイル選択ボタン用
+        async function loadFiles(event) {
+            processFiles(Array.from(event.target.files));
+        }
+
+        // ドラッグ＆ドロップのイベント設定
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            document.getElementById('drop-overlay').style.display = 'block';
+        });
+
+        window.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            // 画面外に出た時に消す
+            if (e.relatedTarget === null) {
+                document.getElementById('drop-overlay').style.display = 'none';
+            }
+        });
+
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            document.getElementById('drop-overlay').style.display = 'none';
+            
+            const files = Array.from(e.dataTransfer.files);
+            processFiles(files);
+        });
     </script>
 </body>
 </html>

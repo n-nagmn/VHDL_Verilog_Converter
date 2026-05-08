@@ -50,8 +50,10 @@ app.post('/api/convert', async (req, res) => {
         let convertedFiles = [];
 
         if (direction === 'vhdl2verilog') {
-            // VHDL -> Verilog
-            await execPromise(`cd ${workDir} && ghdl -a --std=08 *.vhd`);
+            // 1. 全VHDLファイルをインポート（台帳登録）
+            try {
+                await execPromise(`cd ${workDir} && ghdl -i --std=08 *.vhd`);
+            } catch (e) { /* 初期インポートのエラーは無視して次に進む */ }
 
             for (const file of uploadedFiles) {
                 const entityMatches = [...file.content.matchAll(/entity\s+(\w+)\s+is/gi)];
@@ -61,18 +63,35 @@ app.post('/api/convert', async (req, res) => {
                     const outFileName = `${entityName}.v`;
                     const outPath = path.join(workDir, outFileName);
 
-                    // 変換実行
-                    const { stdout } = await execPromise(`cd ${workDir} && ghdl --synth --std=08 --latches --out=verilog ${entityName}`);
-                    
-                    // 一旦保存してフォーマットをかける
-                    fs.writeFileSync(outPath, stdout);
-                    await formatCode(outPath, 'verilog');
-                    
-                    const finalContent = fs.readFileSync(outPath, 'utf8');
-                    convertedFiles.push({ name: outFileName, content: finalContent });
+                    try {
+                        // 2. 依存関係を解決しながらビルド
+                        await execPromise(`cd ${workDir} && ghdl -m --std=08 ${entityName}`);
+                        
+                        // 3. Verilogへ変換
+                        const { stdout } = await execPromise(
+                            `cd ${workDir} && ghdl --synth --std=08 --latches --out=verilog ${entityName}`, 
+                            { maxBuffer: 1024 * 1024 * 100 }
+                        );
+                        
+                        fs.writeFileSync(outPath, stdout);
+                        await formatCode(outPath, 'verilog');
+                        
+                        const finalContent = fs.readFileSync(outPath, 'utf8');
+                        convertedFiles.push({ name: outFileName, content: finalContent });
+                    } catch (err) {
+                        // --- 不足ファイルの解析ロジック ---
+                        const stderr = err.stderr || "";
+                        const missingUnit = stderr.match(/unit\s+"([^"]+)"\s+not\s+found/i);
+                        
+                        if (missingUnit) {
+                            // 「XXX.vhd が足りない」と具体的にエラーを投げる
+                            throw new Error(`不足ファイル検知: 「${missingUnit[1]}.vhd」を一緒にアップロードしてください。`);
+                        }
+                        throw err; // それ以外のエラーはそのまま投げる
+                    }
                 }
             }
-        } else {
+        }else {
             // Verilog -> VHDL
             for (const file of uploadedFiles) {
                 const outputName = file.name.replace(/\.(v|sv)$/, '') + '.vhd';
@@ -80,7 +99,7 @@ app.post('/api/convert', async (req, res) => {
                 const cmd = `cd ${workDir} && iverilog -t vhdl -o ${outputName} ${file.name}`;
                 
                 try {
-                    await execPromise(cmd);
+                    await execPromise(cmd, { maxBuffer: 1024 * 1024 * 100 });
                     
                     // フォーマット実行
                     await formatCode(outPath, 'vhdl');
