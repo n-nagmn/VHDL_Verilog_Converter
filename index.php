@@ -103,24 +103,6 @@
             editorR = monaco.editor.create(document.getElementById('editorRight'), { ...commonConfig, language: 'verilog', readOnly: true });
         });
 
-        async function loadFiles(event) {
-            const files = Array.from(event.target.files);
-            if (files.length === 0) return;
-            
-            inputFiles = [];
-            for (const f of files) {
-                const text = await f.text();
-                inputFiles.push({ name: f.name, content: text });
-            }
-            
-            editorL.setValue(inputFiles[0].content);
-            document.getElementById('fileListDisplay').innerText = `${inputFiles.length}個を読込`;
-            
-            const ext = inputFiles[0].name.split('.').pop().toLowerCase();
-            const mode = (ext === 'vhd' || ext === 'vhdl') ? 'vhdl' : 'verilog';
-            monaco.editor.setModelLanguage(editorL.getModel(), mode);
-        }
-
         async function convertCode() {
             const status = document.getElementById('statusMessage');
             if (inputFiles.length === 0) { alert("ファイルを選択してください"); return; }
@@ -132,7 +114,7 @@
             status.style.color = "#ef6c00";
 
             try {
-                const res = await fetch('http://172.23.72.107:3030/api/convert', {
+                const res = await fetch('http://' + window.location.hostname + ':3030/api/convert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ files: inputFiles, direction: document.getElementById('direction').value })
