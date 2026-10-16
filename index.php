@@ -114,7 +114,9 @@
             status.style.color = "#ef6c00";
 
             try {
-                const res = await fetch('http://' + window.location.hostname + ':3030/api/convert', {
+                // L1: プロトコルをページに合わせ、ポート3030で通信
+                const apiBase = window.location.protocol + '//' + window.location.hostname + ':3030/api/convert';
+                const res = await fetch(apiBase, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ files: inputFiles, direction: document.getElementById('direction').value })
@@ -172,15 +174,21 @@
             }
         }
 
+        // L2: オブジェクトURLはクリック後に10秒で解放する
+        function triggerDownload(objectUrl, fileName) {
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = fileName;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+        }
+
         function downloadSelected() {
             const index = document.getElementById('outputSelector').value;
             const file = outputFiles[index];
             if (!file) return;
             const blob = new Blob([file.content], { type: 'text/plain' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = file.name;
-            a.click();
+            triggerDownload(URL.createObjectURL(blob), file.name);
         }
 
         async function downloadAll() {
@@ -188,10 +196,7 @@
             const zip = new JSZip();
             outputFiles.forEach(f => zip.file(f.name, f.content));
             const content = await zip.generateAsync({ type: "blob" });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(content);
-            a.download = "hdl_formatted_files.zip";
-            a.click();
+            triggerDownload(URL.createObjectURL(content), "hdl_formatted_files.zip");
         }
 
         // 共通のファイル処理関数
