@@ -7,8 +7,9 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-// M3: CORSを同一オリジン（およびOriginヘッダなしのcurl等）に限定
-app.use(cors({ origin: (origin, cb) => cb(null, !origin) }));
+// M3: CORS: Originヘッダをそのままリフレクト（跨ポートのページアクセスを許可）
+// （Originヘッダなしのcurl等は origin === undefined として true を返す）
+app.use(cors({ origin: (origin, cb) => cb(null, origin || true) }));
 app.use(express.json({ limit: '100mb' }));
 
 // H1: ファイル名/エンティティ名のサニタイズ（パス TRAVERSAL・シェルインジェクション対策）
@@ -85,8 +86,9 @@ app.post('/api/convert', async (req, res) => {
         try { if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
     };
 
-    // 中断（クライアント切断）時も作業ディレクトリを確実に削除
-    req.on('close', removeWorkDir);
+    // 中断（クライアント切断）時のみ作業ディレクトリを削除
+    // （通常完了時も 'close' は発火するため、res.writableEnded で区別する）
+    req.on('close', () => { if (!res.writableEnded) removeWorkDir(); });
 
     try {
 
@@ -96,14 +98,22 @@ app.post('/api/convert', async (req, res) => {
         const safeFileNames = []; // H1: 書き出し後に使うサニタイズ済みファイル名
 
         // 1. 全ファイルを一旦書き出し（H1: safeNameでパス TRAVERSAL・インジェクション対策）
+        // M3: 入力ファイル名も uniqueName で重複を回避（同名ファイルの上書きを防ぐ）
         for (const file of uploadedFiles) {
             const safe = safeName(file.name);
             if (!safe || safe.startsWith('.')) {
                 perFileErrors.push({ file: String(file.name || ''), error: '無効なファイル名です。' });
                 continue;
             }
-            safeFileNames.push(safe);
-            fs.writeFileSync(path.join(workDir, safe), file.content);
+            // M6: 入力拡張子の方角別検証
+            const extOk = direction === 'verilog2vhdl' ? /\.(v|sv)$/i.test(safe) : /\.(vhd|vhdl)$/i.test(safe);
+            if (!extOk) {
+                perFileErrors.push({ file: String(file.name || ''), error: 'この変換方向には対応していないファイル拡張子です。' });
+                continue;
+            }
+            const unique = uniqueName(safe, usedNames); // M2: 同名入力の重複回避
+            safeFileNames.push({ original: file, safe: unique }); // M4: ファイルと安全名のペアを保持（indexずれ防止）
+            fs.writeFileSync(path.join(workDir, unique), file.content);
         }
 
         if (safeFileNames.length === 0) {
@@ -115,13 +125,11 @@ app.post('/api/convert', async (req, res) => {
             // M6: cwdオプションで作業ディレクトリへ移動（cdコマンド不使用）
             try {
                 // .vhd と .vhdl の両方をインポート
-                await execFilePromise('ghdl', ['-i', '--std=08', ...safeFileNames.filter(n => /\.vhd(l)?$/i.test(n))],
+                await execFilePromise('ghdl', ['-i', '--std=08', ...safeFileNames.map(f => f.safe)],
                     { ...EXEC_OPTS, cwd: workDir });
             } catch (e) { /* 初期インポートのエラーは無視して次に進む */ }
 
-            for (let i = 0; i < uploadedFiles.length; i++) {
-                const file = uploadedFiles[i];
-                const safeFile = safeFileNames[i];
+            for (const { original: file, safe: safeFile } of safeFileNames) {
                 // M1: コメント除去 + 文先頭アンカーでエンティティを抽出
                 const entityMatches = extractEntities(file.content);
 
@@ -141,7 +149,7 @@ app.post('/api/convert', async (req, res) => {
                         // 3. Verilogへ変換
                         const { stdout } = await execFilePromise(
                             'ghdl', ['--synth', '--std=08', '--latches', '--out=verilog', entityName],
-                            EXEC_OPTS
+                            { ...EXEC_OPTS, cwd: workDir } // M5: cwd指定で作業ディレクトリ内で実行
                         );
 
                         fs.writeFileSync(outPath, stdout);
@@ -165,8 +173,8 @@ app.post('/api/convert', async (req, res) => {
             }
         } else {
             // Verilog -> VHDL
-            for (const safeFile of safeFileNames) {
-                const outputName = safeFile.replace(/\.(v|sv)$/, '') + '.vhd';
+            for (const { original: file, safe: safeFile } of safeFileNames) {
+                const outputName = safeFile.replace(/\.(v|sv)$/i, '') + '.vhd';
                 const uniqueOutputName = uniqueName(outputName, usedNames); // M2
                 const outPath = path.join(workDir, uniqueOutputName);
                 // M6: execFile + argv + cwd（cd不使用）
@@ -183,7 +191,7 @@ app.post('/api/convert', async (req, res) => {
                 } catch (err) {
                     // M5: 静かに失敗せず、エラーを収集して返す
                     console.error(`変換失敗: ${safeFile}`, err);
-                    perFileErrors.push({ file: safeFile, error: String(err.stderr || err.message) });
+                    perFileErrors.push({ file: file.name, error: String(err.stderr || err.message) });
                 }
             }
         }
@@ -202,9 +210,8 @@ app.post('/api/convert', async (req, res) => {
         removeWorkDir();
         if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
     }
-    finally {
-        req.off('close', removeWorkDir);
-    }
+    // 注: req.on('close', ...) は通常完了時も発火するため、
+    // ハンドラ内で res.writableEnded をチェックして通常完了時だけ無視する。
 });
 
 const PORT = 3030;
