@@ -59,6 +59,7 @@
         </select>
         
         <button id="convertBtn" class="btn-convert" onclick="convertCode()">変換と整形を実行</button>
+        <span id="editWarning" style="display:none; color:#c62828; font-size:13px; font-weight:600;">⚠️ 複数ファイル読込中: 編集・保存の対象は1番目のファイルのみです。</span>
         
         <button id="dlBtn" class="btn-download" onclick="downloadSelected()" disabled>💾 保存</button>
         <button id="dlAllBtn" class="btn-zip" onclick="downloadAll()" disabled>📦 全ZIP保存</button>
@@ -108,10 +109,16 @@
             if (inputFiles.length === 0) { alert("ファイルを選択してください"); return; }
             
             // 現在エディタに表示されている内容で上書き（編集対応）
+            // 複数ファイル読込時は1番目のファイルのみ編集可能（他ファイルは読込時の中身を保持）
             inputFiles[0].content = editorL.getValue();
+            document.getElementById('editWarning').style.display = inputFiles.length > 1 ? 'inline' : 'none';
             
             status.innerText = "⏳ 変換・整形中...";
             status.style.color = "#ef6c00";
+
+            // 変換が失敗しても古いダウンロードボタンが表示されないよう、開始時に無効化
+            document.getElementById('dlBtn').disabled = true;
+            document.getElementById('dlAllBtn').disabled = true;
 
             try {
                 // L1: プロトコルをページに合わせ、ポート3030で通信
@@ -211,6 +218,8 @@
             
             editorL.setValue(inputFiles[0].content);
             document.getElementById('fileListDisplay').innerText = `${inputFiles.length}個を読込`;
+            // 複数ファイル読込時は、編集対象が1番目のファイルであることを明示
+            document.getElementById('editWarning').style.display = inputFiles.length > 1 ? 'inline' : 'none';
             
             const ext = inputFiles[0].name.split('.').pop().toLowerCase();
             const mode = (ext === 'vhd' || ext === 'vhdl') ? 'vhdl' : 'verilog';

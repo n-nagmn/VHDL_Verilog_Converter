@@ -76,11 +76,19 @@ app.post('/api/convert', async (req, res) => {
         return res.status(400).json({ success: false, error: "ファイルがありません。" });
     }
 
-    const uniqueId = Date.now() + '_' + Math.floor(Math.random() * 10000);
-    const workDir = path.join(__dirname, `work_${uniqueId}`);
+    // 原子性の高い一時ディレクトリ作成（競合・重複の回避）
+    const workDir = fs.mkdtempSync(path.join(__dirname, 'work_'));
+    let workDirRemoved = false;
+    const removeWorkDir = () => {
+        if (workDirRemoved) return;
+        workDirRemoved = true;
+        try { if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true }); } catch (_) {}
+    };
+
+    // 中断（クライアント切断）時も作業ディレクトリを確実に削除
+    req.on('close', removeWorkDir);
 
     try {
-        if (!fs.existsSync(workDir)) fs.mkdirSync(workDir);
 
         let convertedFiles = [];
         const perFileErrors = []; // M5: ファイル単位の失敗を収集
@@ -106,7 +114,8 @@ app.post('/api/convert', async (req, res) => {
             // 1. 全VHDLファイルをインポート（台帳登録）
             // M6: cwdオプションで作業ディレクトリへ移動（cdコマンド不使用）
             try {
-                await execFilePromise('ghdl', ['-i', '--std=08', ...safeFileNames.filter(n => n.toLowerCase().endsWith('.vhd'))],
+                // .vhd と .vhdl の両方をインポート
+                await execFilePromise('ghdl', ['-i', '--std=08', ...safeFileNames.filter(n => /\.vhd(l)?$/i.test(n))],
                     { ...EXEC_OPTS, cwd: workDir });
             } catch (e) { /* 初期インポートのエラーは無視して次に進む */ }
 
@@ -146,10 +155,11 @@ app.post('/api/convert', async (req, res) => {
                         const missingUnit = stderr.match(/unit\s+"([^"]+)"\s+not\s+found/i);
 
                         if (missingUnit) {
-                            // 「XXX.vhd が足りない」と具体的にエラーを投げる
-                            throw new Error(`不足ファイル検知: 「${missingUnit[1]}.vhd」を一緒にアップロードしてください。`);
+                            // 「XXX.vhd が足りない」と具体的に報告（他のファイルは変換を続行）
+                            perFileErrors.push({ file: file.name, error: `不足ファイル検知: 「${missingUnit[1]}.vhd」を一緒にアップロードしてください。` });
+                        } else {
+                            perFileErrors.push({ file: file.name, error: `エンティティ「${entityName}」の変換に失敗: ${err.message}` });
                         }
-                        perFileErrors.push({ file: file.name, error: `エンティティ「${entityName}」の変換に失敗: ${err.message}` });
                     }
                 }
             }
@@ -179,7 +189,7 @@ app.post('/api/convert', async (req, res) => {
         }
 
         // 作業ディレクトリ削除
-        fs.rmSync(workDir, { recursive: true, force: true });
+        removeWorkDir();
 
         if (convertedFiles.length === 0) {
             const detail = perFileErrors.length > 0 ? ' 詳細: ' + perFileErrors.map(e => `[${e.file}] ${e.error}`).join(' | ') : '';
@@ -189,8 +199,11 @@ app.post('/api/convert', async (req, res) => {
         res.json({ success: true, files: convertedFiles, perFileErrors: perFileErrors });
 
     } catch (e) {
-        if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
-        res.status(500).json({ success: false, error: e.message });
+        removeWorkDir();
+        if (!res.headersSent) res.status(500).json({ success: false, error: e.message });
+    }
+    finally {
+        req.off('close', removeWorkDir);
     }
 });
 
