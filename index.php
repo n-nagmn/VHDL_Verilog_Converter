@@ -67,6 +67,10 @@
         <span id="statusMessage" style="margin-left: auto; font-weight: bold; padding-right: 10px;"></span>
     </div>
 
+    <div id="partialWarning" style="display:none; background:#fff3cd; color:#856404; border:1px solid #ffe08a; border-radius:8px; padding:10px 15px; margin-bottom:15px; font-size:14px;">
+        ⚠️ 一部ファイルの変換に失敗しました: <span id="partialWarningDetail"></span>
+    </div>
+
     <div class="editor-container">
         <div class="editor-box">
             <div class="editor-label">入力ソース</div>
@@ -133,6 +137,8 @@
                 if (data.success) {
                     outputFiles = data.files;
                     updateOutputSelector();
+                    // L3: 変換のたびにセレクタを先頭(0)にリセット
+                    document.getElementById('outputSelector').selectedIndex = 0;
                     displayOutput(0);
                     
                     document.getElementById('dlBtn').disabled = false;
@@ -140,15 +146,28 @@
                     
                     status.innerText = "✅ 完了";
                     status.style.color = "green";
+
+                    // M8: 部分失敗がある場合は警告バナーを表示
+                    const warning = document.getElementById('partialWarning');
+                    if (data.perFileErrors && data.perFileErrors.length > 0) {
+                        document.getElementById('partialWarningDetail').innerText =
+                            data.perFileErrors.map(e => `[${e.file}] ${e.error}`).join('；');
+                        warning.style.display = 'block';
+                    } else {
+                        warning.style.display = 'none';
+                    }
                 } else {
                     status.innerText = "❌ 失敗";
                     status.style.color = "red";
                     
+                    // M2: data.error が文字列でない場合のガード
+                    const err = typeof data.error === 'string' ? data.error : 'Unknown error';
+
                     // 「不足ファイル検知」というキーワードが含まれていたら、親切なアラートを出す
-                    if (data.error.includes("不足ファイル検知")) {
-                        alert("⚠️ 依存ファイルが足りません\n\n" + data.error);
+                    if (err.includes("不足ファイル検知")) {
+                        alert("⚠️ 依存ファイルが足りません\n\n" + err);
                     } else {
-                        alert("サーバーエラー: " + data.error);
+                        alert("サーバーエラー: " + err);
                     }
                 }
             } catch (e) { 
